@@ -1,0 +1,8 @@
+.env
+__pycache__/
+*.pyc
+*.ttf
+_preview/
+_sample-output/
+.DS_Store
+Icon?

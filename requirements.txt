@@ -1,0 +1,7 @@
+weasyprint==69.0
+supabase>=2.0
+# FastAPI bits are optional now (the worker polls Supabase). Kept for manual
+# /import + /render testing and a future push-mode deployment.
+fastapi==0.115.6
+uvicorn[standard]==0.34.0
+python-multipart==0.0.20

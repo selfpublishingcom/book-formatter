@@ -1,0 +1,8 @@
+services:
+  book-formatter-worker:
+    build: .
+    # restart on crash and on VPS reboot — set-and-forget
+    restart: unless-stopped
+    env_file: .env
+    # The worker only makes OUTBOUND calls to Supabase (it polls for jobs),
+    # so no ports are published and nothing needs to be opened in the firewall.
