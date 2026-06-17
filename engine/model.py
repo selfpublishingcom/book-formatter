@@ -11,6 +11,107 @@ def new_id(prefix="b"):
 _SCENE_TEXT = re.compile(r"^\s*(?:\*\s*\*\s*\*|#\s*#\s*#|\*{3,}|—{3,}|⁂|★(?:\s*★)*)\s*$")
 
 
+# --- Section classification (front/back matter vs numbered body chapters) ----
+_FRONT_MATTER = {
+    "title page", "half title", "half-title", "copyright", "copyright page",
+    "dedication", "epigraph", "foreword", "preface", "introduction", "prologue",
+    "contents", "table of contents",
+}
+_BACK_MATTER = {
+    "conclusion", "epilogue", "afterword", "postscript",
+    "glossary", "notes", "endnotes", "references", "bibliography", "index",
+}
+# Strip an author-typed "Chapter N" / "Chapter One" prefix so the engine can
+# apply its own consistent numbering instead of doubling it up.
+_CHAP_PREFIX = re.compile(
+    r'^\s*chapter\s+(?:\d+|[ivxlcdm]+|one|two|three|four|five|six|seven|eight|'
+    r'nine|ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|'
+    r'eighteen|nineteen|twenty)\b\s*[:.\)\-–—]*\s*',
+    re.I,
+)
+
+
+def _section_kind(title_low):
+    t = title_low.strip(" :.-–—")
+    if t in _FRONT_MATTER:
+        return "front"
+    if t in _BACK_MATTER:
+        return "back"
+    for w in ("appendix", "about the author", "about the authors", "acknowledg"):
+        if t.startswith(w):
+            return "back"
+    return "body"
+
+
+def _strip_chapter_prefix(title):
+    return _CHAP_PREFIX.sub("", title, count=1).strip() if title else (title or "")
+
+
+def _running_title(text, maxlen=42):
+    text = (text or "").strip()
+    if len(text) > maxlen:
+        text = text[:maxlen].rsplit(" ", 1)[0].rstrip(" ,;:-–—") + "…"
+    return text
+
+
+def _has_prose(blocks):
+    return any(b.get("type") in ("paragraph", "rich", "table", "callout", "image")
+               for b in (blocks or []))
+
+
+def _prepare_sections(chapters, book_title):
+    """Classify each chapter as front/back matter or a numbered body chapter,
+    strip duplicate/author numbering, drop empties. Runs at RENDER time so it
+    also fixes already-imported book models (which carry no section role)."""
+    bt = (book_title or "").strip().lower().strip(" :.-–—")
+    out = []
+    body_n = 0
+    for ch in chapters or []:
+        blocks = ch.get("blocks", [])
+        raw = (ch.get("title") or "").strip()
+        low = raw.lower()
+        # Drop a duplicate book-title section that carries no real prose
+        # (the title H1 re-imported as a chapter).
+        if bt and low.strip(" :.-–—") == bt and not _has_prose(blocks):
+            continue
+        # Skip wholly empty sections (e.g. an empty "Epilogue" placeholder) that
+        # would otherwise render as blank pages.
+        if not blocks:
+            continue
+        kind = _section_kind(low) if raw else "plain"
+        if kind == "body" and raw:
+            body_n += 1
+            number = body_n
+            display = _strip_chapter_prefix(raw)
+        else:
+            number = None
+            display = raw if kind in ("front", "back") else ""
+        out.append({
+            "chapter": ch, "kind": kind, "number": number,
+            "display": display, "running": _running_title(display or raw),
+        })
+    return out
+
+
+def _table_as_callout(table_html):
+    """A single-column 'layout' table is almost always a Word text box / shaded
+    callout, not tabular data. Return its flattened inner HTML so it can render
+    as a callout box; return None for real (multi-column) data tables."""
+    try:
+        soup = BeautifulSoup(table_html or "", "lxml")
+        t = soup.find("table")
+        if not t:
+            return None
+        rows = t.find_all("tr")
+        if not rows or max(len(r.find_all(["td", "th"])) for r in rows) > 1:
+            return None
+        parts = [c.decode_contents().strip() for c in t.find_all(["td", "th"])]
+        inner = "".join(p for p in parts if p)
+        return inner or None
+    except Exception:
+        return None
+
+
 def _pandoc(args, input_bytes=None):
     proc = subprocess.run(["pandoc", *args], input=input_bytes, capture_output=True)
     if proc.returncode != 0:
@@ -183,7 +284,11 @@ def _block_html(block, settings, is_first_para):
         return (f'<figure class="img"{style}><img src="{html.escape(block.get("src",""))}" '
                 f'alt="{html.escape(block.get("alt",""))}"{wstyle}/>{caphtml}</figure>')
     if t == "table":
-        return f'<div class="table"{style}>{block.get("html","")}</div>'
+        inner = block.get("html", "")
+        callout = _table_as_callout(inner)
+        if callout is not None:
+            return f'<aside class="callout"{style}>{callout}</aside>'
+        return f'<div class="table"{style}>{inner}</div>'
     if t == "scene_break":
         return f'<p class="scene-break">{html.escape(settings.get("scene_break","* * *"))}</p>'
     if t == "pagebreak":
@@ -193,43 +298,38 @@ def _block_html(block, settings, is_first_para):
     return ""
 
 
-def _chapter_html(idx, chapter, settings):
-    title = chapter.get("title",""); style = settings["chapter_style"]; ornament = settings["chapter_ornament"]
+def _section_html(sec, settings):
+    ch = sec["chapter"]; kind = sec["kind"]; number = sec["number"]
+    display = sec["display"]; running = sec["running"]
+    style = settings["chapter_style"]; ornament = settings["chapter_ornament"]
     opener = ['<div class="chap-opener">']
-    if title:
+    if kind == "body" and number is not None:
         if style == "modern_number":
-            opener.append(f'<div class="chap-num">{idx}</div>')
+            opener.append(f'<div class="chap-num">{number}</div>')
         else:
-            opener.append(f'<div class="chap-num">{html.escape("Chapter " + str(idx))}</div>')
-        opener.append(f'<h2 class="chap-title">{html.escape(title)}</h2>')
-        if ornament:
-            opener.append(f'<div class="chap-ornament">{html.escape(ornament)}</div>')
+            opener.append(f'<div class="chap-num">{html.escape("Chapter " + str(number))}</div>')
+    if display:
+        opener.append(f'<h2 class="chap-title">{html.escape(display)}</h2>')
+    has_opener = (number is not None) or bool(display)
+    if has_opener and ornament:
+        opener.append(f'<div class="chap-ornament">{html.escape(ornament)}</div>')
     opener.append("</div>")
     first_done = False; body = []
-    for b in chapter.get("blocks", []):
+    for b in ch.get("blocks", []):
         is_first = (b.get("type") == "paragraph" and not first_done)
         if is_first: first_done = True
         body.append(_block_html(b, settings, is_first))
-    chap_title_css = f'<div style="string-set: chaptitle \'{_css_str(title)}\';"></div>'
-    return f'<section class="chapter">{chap_title_css}{"".join(opener)}{"".join(body)}</section>'
+    chap_title_css = f'<div style="string-set: chaptitle \'{_css_str(running or display or "")}\';"></div>'
+    opener_html = "".join(opener) if has_opener else ""
+    return f'<section class="chapter">{chap_title_css}{opener_html}{"".join(body)}</section>'
 
 
 def render_html(book, settings, css):
     meta = book.get("meta", {})
     title = meta.get("title") or settings.get("title") or "Untitled"
     parts = [_front_matter_html(meta, settings)]
-    idx = 0
-    for ch in book.get("chapters", []):
-        if ch.get("title"):
-            idx += 1
-            parts.append(_chapter_html(idx, ch, settings))
-        else:
-            first_done = False; body = []
-            for b in ch.get("blocks", []):
-                is_first = (b.get("type") == "paragraph" and not first_done)
-                if is_first: first_done = True
-                body.append(_block_html(b, settings, is_first))
-            parts.append(f'<section class="chapter">{"".join(body)}</section>')
+    for sec in _prepare_sections(book.get("chapters", []), title):
+        parts.append(_section_html(sec, settings))
     booktitle_css = f"body {{ string-set: booktitle '{_css_str(title)}'; }}"
     return f"""<!DOCTYPE html>
 <html lang="en"><head><meta charset="utf-8"><title>{html.escape(title)}</title>
@@ -244,7 +344,7 @@ def render_html(book, settings, css):
 import re as _re_dc
 def _inject_dropcap(html_content):
     # wrap the first visible letter (after any leading tags/opening quote) in a span
-    m = _re_dc.match(r'^(\s*(?:<[^>]+>\s*)*["\u201c\u2018\']?)([A-Za-z])', html_content)
+    m = _re_dc.match(r'^(\s*(?:<[^>]+>\s*)*["“‘\']?)([A-Za-z])', html_content)
     if not m:
         return html_content
     pre, letter = m.group(1), m.group(2)

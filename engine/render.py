@@ -103,6 +103,14 @@ def _css(s):
     .table th {{ font-family:"{head_font}",serif; font-weight:700; background:#f2f2f2; }}
     .rich {{ text-indent:0; margin:0.8em 0; }}
     .rich ul, .rich ol {{ margin:0.6em 0 0.6em 1.6em; }}
+    .callout {{ break-inside:avoid; margin:1.4em 0.2em; padding:0.85em 1.1em;
+        background:#f6f3ec; border-left:3pt solid #c9bfa6; text-indent:0; font-size:10.5pt; }}
+    .callout > *:first-child {{ margin-top:0; }}
+    .callout > *:last-child {{ margin-bottom:0; }}
+    .callout p {{ text-indent:0; margin:0.5em 0; }}
+    .callout h1, .callout h2, .callout h3, .callout h4 {{ font-family:"{head_font}",serif;
+        font-weight:600; font-size:12pt; text-align:left; margin:0 0 0.4em 0; text-indent:0;
+        font-variant:normal; letter-spacing:0; }}
     blockquote {{ margin:1em 1.4em; font-style:italic; text-indent:0; }}
     em {{ font-style:italic; }} strong {{ font-weight:700; }}
     """
