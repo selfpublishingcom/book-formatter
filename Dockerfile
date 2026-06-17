@@ -1,5 +1,9 @@
 FROM python:3.11-slim
 
+# Stream stdout/stderr straight to `docker logs` (no Python buffering) so the
+# worker's polling/import/render lines show up live.
+ENV PYTHONUNBUFFERED=1
+
 # System deps: pandoc (EPUB + manuscript ingest) + WeasyPrint runtime libs
 # (pango/cairo/gdk-pixbuf) + fontconfig.
 RUN apt-get update && apt-get install -y --no-install-recommends \
