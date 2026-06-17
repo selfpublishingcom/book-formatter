@@ -8,13 +8,18 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         libcairo2 libgdk-pixbuf-2.0-0 libffi-dev \
         fontconfig \
         fonts-dejavu-core \
+        curl ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 
 # Bundle the v1 book fonts (all free, embeddable Google Fonts).
 # Body: EB Garamond, Lora, Merriweather, Libre Baskerville, Source Serif 4.
 # Headings: Montserrat, Lato.
+# Fonts are NOT committed to git — they are fetched from the official google/fonts
+# repo at build time by fonts/fetch_fonts.sh (keeps the repo free of binaries).
 COPY fonts/ /usr/share/fonts/book/
-RUN find /usr/share/fonts/book -type f -size -1k -delete && fc-cache -f
+RUN cd /usr/share/fonts/book && bash fetch_fonts.sh \
+    && find /usr/share/fonts/book -type f -size -1k -delete \
+    && fc-cache -f
 
 WORKDIR /app
 COPY requirements.txt .
